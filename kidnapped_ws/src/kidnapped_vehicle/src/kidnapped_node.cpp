@@ -24,8 +24,8 @@ public:
     velocity_(0.6),
     yaw_rate_(0.05),
     sensor_range_(40.0),
-    max_translation_error_(0.5),  // adjust based on your assignment
-    max_yaw_error_(0.05),         // adjust based on your assignment
+    max_translation_error_(0.5),
+    max_yaw_error_(0.05),
     max_trans_err_(0.0),
     max_yaw_err_(0.0),
     true_x_(102.0),
@@ -53,11 +53,13 @@ public:
     }
 
     // Publishers for RViz visualization
-    particles_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("particles", 1);
-    traj_pub_      = this->create_publisher<visualization_msgs::msg::Marker>("trajectory", 1);
-    pose_pub_      = this->create_publisher<geometry_msgs::msg::PoseStamped>("pf_pose", 1);
+    particles_pub_   = this->create_publisher<visualization_msgs::msg::Marker>("particles", 1);
+    traj_pub_        = this->create_publisher<visualization_msgs::msg::Marker>("trajectory", 1);
+    pose_pub_        = this->create_publisher<geometry_msgs::msg::PoseStamped>("pf_pose", 1);
+    landmarks_pub_   = this->create_publisher<visualization_msgs::msg::Marker>("landmarks", 1);
+    gt_traj_pub_     = this->create_publisher<visualization_msgs::msg::Marker>("ground_truth", 1);
 
-    // Initialize trajectory marker
+    // Initialize trajectory marker (PF estimate)
     traj_marker_.header.frame_id = "map";
     traj_marker_.ns = "trajectory";
     traj_marker_.id = 0;
@@ -68,6 +70,40 @@ public:
     traj_marker_.color.r = 1.0;
     traj_marker_.color.g = 0.0;
     traj_marker_.color.b = 0.0;
+
+    // Initialize ground-truth trajectory marker
+    gt_traj_marker_.header.frame_id = "map";
+    gt_traj_marker_.ns = "ground_truth";
+    gt_traj_marker_.id = 0;
+    gt_traj_marker_.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    gt_traj_marker_.action = visualization_msgs::msg::Marker::ADD;
+    gt_traj_marker_.scale.x = 0.3;  // line width
+    gt_traj_marker_.color.a = 1.0;
+    gt_traj_marker_.color.r = 1.0;  // red
+    gt_traj_marker_.color.g = 0.0;
+    gt_traj_marker_.color.b = 0.0;
+
+    // Pre-build landmarks marker (blue spheres)
+    landmarks_marker_.header.frame_id = "map";
+    landmarks_marker_.ns = "landmarks";
+    landmarks_marker_.id = 0;
+    landmarks_marker_.type = visualization_msgs::msg::Marker::SPHERE_LIST;
+    landmarks_marker_.action = visualization_msgs::msg::Marker::ADD;
+    landmarks_marker_.scale.x = 0.8;
+    landmarks_marker_.scale.y = 0.8;
+    landmarks_marker_.scale.z = 0.8;
+    landmarks_marker_.color.a = 1.0;
+    landmarks_marker_.color.r = 0.0;
+    landmarks_marker_.color.g = 0.0;
+    landmarks_marker_.color.b = 1.0;  // blue
+
+    for (const auto &lm : map_.landmark_list) {
+      geometry_msgs::msg::Point p;
+      p.x = lm.x_f;
+      p.y = lm.y_f;
+      p.z = 0.0;
+      landmarks_marker_.points.push_back(p);
+    }
 
     // Initialize particle filter with a noisy GPS estimate around true pose
     std::normal_distribution<double> dist_x(0.0, std_pos[0]);
@@ -120,6 +156,8 @@ private:
     publishParticles();
     publishPose(best);
     publishTrajectory(best);
+    publishLandmarks();              // landmarks (static)
+    publishGroundTruthTrajectory();  // ground truth line
 
     // 7. Check stopping condition
     step_++;
@@ -239,6 +277,7 @@ private:
     m.color.a = 1.0;
     m.color.g = 1.0;  // green
 
+    m.points.clear();
     for (const auto &p : pf_.particles) {
       geometry_msgs::msg::Point pt;
       pt.x = p.x;
@@ -270,7 +309,6 @@ private:
 
   void publishTrajectory(const Particle &best)
   {
-    traj_marker_.header.frame_id = "map";
     traj_marker_.header.stamp = this->now();
 
     geometry_msgs::msg::Point pt;
@@ -280,6 +318,26 @@ private:
     traj_marker_.points.push_back(pt);
 
     traj_pub_->publish(traj_marker_);
+  }
+
+  void publishLandmarks()
+  {
+    // Just stamp and publish the pre-built marker
+    landmarks_marker_.header.stamp = this->now();
+    landmarks_pub_->publish(landmarks_marker_);
+  }
+
+  void publishGroundTruthTrajectory()
+  {
+    gt_traj_marker_.header.stamp = this->now();
+
+    geometry_msgs::msg::Point pt;
+    pt.x = true_x_;
+    pt.y = true_y_;
+    pt.z = 0.0;
+    gt_traj_marker_.points.push_back(pt);
+
+    gt_traj_pub_->publish(gt_traj_marker_);
   }
 
   // Members
@@ -293,9 +351,13 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr particles_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr traj_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr landmarks_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr gt_traj_pub_;
 
-  // Trajectory marker for RViz
-  visualization_msgs::msg::Marker traj_marker_;
+  // Markers for RViz
+  visualization_msgs::msg::Marker traj_marker_;      // PF trajectory (estimated)
+  visualization_msgs::msg::Marker gt_traj_marker_;   // Ground truth trajectory
+  visualization_msgs::msg::Marker landmarks_marker_; // Landmarks
 
   // Random generator
   std::mt19937 gen_{std::random_device{}()};
@@ -303,15 +365,14 @@ private:
   // Noise parameters
   double std_pos[3]      = {0.1, 0.1, 0.005};
   double std_landmark[2] = {0.05, 0.05};
-  // for observations [x, y]
 
   // Simulation
   int step_;
   int max_steps_;
   double delta_t_;
-  double velocity_ = 0.6;
-  double yaw_rate_ = 0.05;
-  double sensor_range_ = 40.0;
+  double velocity_;
+  double yaw_rate_;
+  double sensor_range_;
 
   // Ground truth
   double true_x_;
