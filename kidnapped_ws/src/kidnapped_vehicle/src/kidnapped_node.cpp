@@ -19,7 +19,7 @@ public:
     pf_(),
     pf_initialized_(false),
     step_(0),
-    max_steps_(100),
+    max_steps_(10000),
     delta_t_(0.1),
     velocity_(0.6),
     yaw_rate_(0.05),
